@@ -7,7 +7,8 @@ set -o pipefail
 CURRENT="$(dirname "${BASH_SOURCE[0]}")"
 ROOT=$(dirname "${BASH_SOURCE[0]}")/..
 DEFAULT_NAMESPACE="clusterlink-system"
-KIND_IMAGE="ghcr.io/kosmos-io/clusterlink/kindest/node:v1.25.3_1"
+KIND_IMAGE="ghcr.io/kosmos-io/node:v1.25.3"
+# KIND_IMAGE="ghcr.io/kosmos-io/node:v0.1.0"
 # true: when cluster is exist, reuse exist one!
 REUSE=${REUSE:-false}
 VERSION=${VERSION:-latest}
@@ -69,6 +70,8 @@ function create_cluster() {
         docker pull docker.io/calico/kube-controllers:v3.25.0
         docker pull docker.io/calico/node:v3.25.0
         docker pull docker.io/calico/csi:v3.25.0
+        docker pull docker.io/calico/apiserver:v3.25.0
+        docker pull docker.io/calico/node-driver-registrar:v3.25.0
     else
         docker pull quay.m.daocloud.io/tigera/operator:v1.29.0
         docker pull docker.m.daocloud.io/calico/cni:v3.25.0
@@ -94,6 +97,8 @@ function create_cluster() {
     kind load docker-image -n "$clustername" docker.io/calico/kube-controllers:v3.25.0
     kind load docker-image -n "$clustername" docker.io/calico/node:v3.25.0
     kind load docker-image -n "$clustername" docker.io/calico/csi:v3.25.0
+    kind load docker-image -n "$clustername" docker.io/calico/apiserver:v3.25.0
+    kind load docker-image -n "$clustername" docker.io/calico/node-driver-registrar:v3.25.0
 
     kubectl --context="kind-${clustername}" create -f "$CURRENT/calicooperator/tigera-operator.yaml" || $("${REUSE}" -eq "true")
     kind export kubeconfig --name "$clustername"
@@ -115,7 +120,7 @@ function join_cluster() {
   local member_cluster=$2
   local container_ip_port
   cat <<EOF | kubectl --context="kind-${host_cluster}" apply -f -
-apiVersion: clusterlink.io/v1alpha1
+apiVersion: kosmos.io/v1alpha1
 kind: Cluster
 metadata:
   name: ${member_cluster}
@@ -140,7 +145,7 @@ function deploy_clusterlink() {
 
    kubectl --context="kind-${clustername}" apply -f "$ROOT"/deploy/clusterlink-namespace.yml
    kubectl --context="kind-${clustername}" apply -f "$ROOT"/deploy/crds
-   util::wait_for_crd clusternodes.clusterlink.io clusters.clusterlink.io
+   util::wait_for_crd clusternodes.kosmos.io clusters.kosmos.io
 
    sed -e "s|__VERSION__|$VERSION|g" -e "w ${ROOT}/environments/clusterlink-network-manager.yml" "$ROOT"/deploy/clusterlink-network-manager.yml
    kubectl --context="kind-${clustername}" apply -f "${ROOT}/environments/clusterlink-network-manager.yml"
