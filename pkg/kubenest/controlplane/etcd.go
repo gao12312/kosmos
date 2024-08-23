@@ -38,14 +38,15 @@ func installEtcd(client clientset.Interface, name, namespace string, kubeNestCon
 
 	var resourceQuantity resource.Quantity
 	var err error
-	if vc.Spec.EtcdSize != "" {
-		resourceQuantity, err = resource.ParseQuantity(vc.Spec.EtcdSize)
+
+	if vc.Spec.KubeInKubeConfig.ETCDUnitSize != "" {
+		resourceQuantity, err = resource.ParseQuantity(vc.Spec.KubeInKubeConfig.ETCDUnitSize)
 		if err != nil {
-			klog.Errorf("Failed to parse etcdSize %s: %v", vc.Spec.EtcdSize, err)
+			klog.Errorf("Failed to parse etcdSize %s: %v", vc.Spec.KubeInKubeConfig.ETCDUnitSize, err)
 			return err
 		}
 		if resourceQuantity.Value() <= 0 {
-			klog.Errorf("Invalid vc.spec.etcdSize: must be greater than zero")
+			klog.Errorf("Invalid vc.Spec.KubeInKubeConfig.ETCDUnitSize: must be greater than zero")
 			return err
 		}
 		resourceQuantity.Set(resourceQuantity.Value())
