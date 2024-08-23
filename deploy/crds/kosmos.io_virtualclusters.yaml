@@ -43,9 +43,6 @@ spec:
           spec:
             description: Spec is the specification for the behaviour of the VirtualCluster.
             properties:
-              etcdSize:
-                description: definites the EtcdSize
-                type: string
               externalIP:
                 description: ExternalIP is the external ip of the virtual kubernetes's
                   control plane

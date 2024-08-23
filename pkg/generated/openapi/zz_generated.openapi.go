@@ -3485,13 +3485,6 @@ func schema_pkg_apis_kosmos_v1alpha1_VirtualClusterSpec(ref common.ReferenceCall
 							},
 						},
 					},
-					"etcdSize": {
-						SchemaProps: spec.SchemaProps{
-							Description: "definites the EtcdSize",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
 				},
 			},
 		},
