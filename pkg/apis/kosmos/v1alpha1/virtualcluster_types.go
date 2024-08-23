@@ -76,6 +76,10 @@ type VirtualClusterSpec struct {
 	// datasource for plugin yaml
 	// +optional
 	PluginOptions []PluginOptions `json:"pluginOptions,omitempty"`
+
+	//definites the EtcdSize
+	// +optional
+	EtcdSize string `json:"etcdSize,omitempty"`
 }
 
 // PluginSet specifies enabled and disabled plugins .
