@@ -280,7 +280,10 @@ func (c *ClusterController) setupControllers(
 		return fmt.Errorf("error starting %s: %v", controllers.NodeResourcesControllerName, err)
 	}
 
-	nodeLeaseController := controllers.NewNodeLeaseController(leafClientset, c.Root, nodes, leafNodeSelector, c.RootClientset, c.LeafModelHandler)
+	//  SharedPodLock used in NodeLeaseController and LeafPodReconciler for sync podstatus from leaf to root
+	var SharedPodLock sync.Mutex
+
+	nodeLeaseController := controllers.NewNodeLeaseController(leafClientset, c.Root, nodes, leafNodeSelector, c.RootClientset, c.LeafModelHandler, &SharedPodLock)
 	if err := mgr.Add(nodeLeaseController); err != nil {
 		return fmt.Errorf("error starting %s: %v", controllers.NodeLeaseControllerName, err)
 	}
@@ -307,6 +310,7 @@ func (c *ClusterController) setupControllers(
 	leafPodController := podcontrollers.LeafPodReconciler{
 		RootClient: c.Root,
 		Namespace:  "",
+		PodLock:    &SharedPodLock,
 	}
 
 	if err := leafPodController.SetupWithManager(mgr); err != nil {

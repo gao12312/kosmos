@@ -19,6 +19,8 @@ import (
 
 	kosmosv1alpha1 "github.com/kosmos.io/kosmos/pkg/apis/kosmos/v1alpha1"
 	leafUtils "github.com/kosmos.io/kosmos/pkg/clustertree/cluster-manager/utils"
+	"github.com/kosmos.io/kosmos/pkg/utils/podutils"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -28,6 +30,7 @@ const (
 	DefaultRenewIntervalFraction = 0.25
 
 	DefaultNodeStatusUpdateInterval = 1 * time.Minute
+	DefaultpodStatusUpdateInterval  = 10 * time.Second
 )
 
 type NodeLeaseController struct {
@@ -36,24 +39,28 @@ type NodeLeaseController struct {
 	root             client.Client
 	LeafModelHandler leafUtils.LeafModelHandler
 
-	leaseInterval  time.Duration
-	statusInterval time.Duration
+	leaseInterval     time.Duration
+	statusInterval    time.Duration
+	podstatusInterval time.Duration
 
 	nodes             []*corev1.Node
 	LeafNodeSelectors map[string]kosmosv1alpha1.NodeSelector
 	nodeLock          sync.Mutex
+	podLock           *sync.Mutex
 }
 
-func NewNodeLeaseController(leafClient kubernetes.Interface, root client.Client, nodes []*corev1.Node, LeafNodeSelectors map[string]kosmosv1alpha1.NodeSelector, rootClient kubernetes.Interface, LeafModelHandler leafUtils.LeafModelHandler) *NodeLeaseController {
+func NewNodeLeaseController(leafClient kubernetes.Interface, root client.Client, nodes []*corev1.Node, LeafNodeSelectors map[string]kosmosv1alpha1.NodeSelector, rootClient kubernetes.Interface, LeafModelHandler leafUtils.LeafModelHandler, podLock *sync.Mutex) *NodeLeaseController {
 	c := &NodeLeaseController{
 		leafClient:        leafClient,
 		rootClient:        rootClient,
 		root:              root,
 		nodes:             nodes,
+		podLock:           podLock,
 		LeafModelHandler:  LeafModelHandler,
 		LeafNodeSelectors: LeafNodeSelectors,
 		leaseInterval:     getRenewInterval(),
 		statusInterval:    DefaultNodeStatusUpdateInterval,
+		podstatusInterval: DefaultpodStatusUpdateInterval,
 	}
 	return c
 }
@@ -61,6 +68,7 @@ func NewNodeLeaseController(leafClient kubernetes.Interface, root client.Client,
 func (c *NodeLeaseController) Start(ctx context.Context) error {
 	go wait.UntilWithContext(ctx, c.syncLease, c.leaseInterval)
 	go wait.UntilWithContext(ctx, c.syncNodeStatus, c.statusInterval)
+	go wait.UntilWithContext(ctx, c.syncpodStatus, c.podstatusInterval)
 	<-ctx.Done()
 	return nil
 }
@@ -86,6 +94,54 @@ func (c *NodeLeaseController) updateNodeStatus(ctx context.Context, n []*corev1.
 	if err != nil {
 		klog.Errorf("Could not update node status in root cluster,Error: %v", err)
 	}
+	return nil
+}
+
+func (c *NodeLeaseController) syncpodStatus(ctx context.Context) {
+	err := c.updatepodStatus(ctx)
+	if err != nil {
+		klog.Errorf(err.Error())
+	}
+}
+
+func (c *NodeLeaseController) updatepodStatus(ctx context.Context) error {
+
+	pods, err := c.leafClient.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		klog.Errorf("Could not list pods in leaf cluster,Error: %v", err)
+	}
+
+	c.podLock.Lock()
+	defer c.podLock.Unlock()
+
+	for _, leafpod := range pods.Items {
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			rootpod := &corev1.Pod{}
+			if err := c.root.Get(ctx, types.NamespacedName{Name: leafpod.Name, Namespace: leafpod.Namespace}, rootpod); err != nil {
+				if apierrors.IsNotFound(err) {
+					klog.Warningf("Pod %s in namespace %s not found in root cluster, skipping...", leafpod.Name, leafpod.Namespace)
+					return nil
+				}
+				return err
+			}
+
+			rPodCopy := rootpod.DeepCopy()
+			if podutils.IsKosmosPod(rPodCopy) {
+				rPodCopy.Status = leafpod.Status
+				podutils.FitObjectMeta(&rPodCopy.ObjectMeta)
+				if err := c.root.Status().Update(ctx, rPodCopy); err != nil && !apierrors.IsNotFound(err) {
+					klog.V(4).Info(errors.Wrap(err, "error while updating pod status in kubernetes"))
+					return nil
+				}
+			}
+			return nil
+		})
+
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
