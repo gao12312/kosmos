@@ -212,7 +212,6 @@ func startEndPointsControllers(mgr manager.Manager) error {
 }
 
 func run(ctx context.Context, config *config.Config) error {
-
 	newscheme := scheme.NewSchema()
 	err := apiextensionsv1.AddToScheme(newscheme)
 	if err != nil {
@@ -291,12 +290,6 @@ func run(ctx context.Context, config *config.Config) error {
 	if err = VirtualClusterNodeController.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("error starting %s: %v", constants.NodeControllerName, err)
 	}
-
-	go func() {
-		if err := VirtualClusterNodeController.Start(ctx); err != nil {
-			klog.Errorf("error starting VirtualClusterNodeController: %v", err)
-		}
-	}()
 
 	if config.KubeNestOptions.KubeNestType == v1alpha1.KosmosKube {
 		KosmosJoinController := kosmos.KosmosJoinController{

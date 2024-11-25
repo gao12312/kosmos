@@ -22,21 +22,13 @@ import (
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
 	"github.com/kosmos.io/kosmos/cmd/kubenest/node-agent/app/logger"
-	"github.com/kosmos.io/kosmos/cmd/kubenest/node-agent/config"
-	"github.com/kosmos.io/kosmos/pkg/apis/kosmos/v1alpha1"
 	"github.com/kosmos.io/kosmos/pkg/generated/clientset/versioned"
-	"github.com/kosmos.io/kosmos/pkg/kubenest/constants"
-	glnodecontroller "github.com/kosmos.io/kosmos/pkg/kubenest/controller/global.node.controller"
-	"github.com/kosmos.io/kosmos/pkg/scheme"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
-	controllerruntime "sigs.k8s.io/controller-runtime"
 )
 
 var (
@@ -79,34 +71,80 @@ func serveCmdRun(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to load kubeconfig: %w", err)
 	}
 
-	// Initialize Kubernetes client
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		log.Errorf("Failed to create Kubernetes client: %v", err)
-		return fmt.Errorf("failed to create Kubernetes client: %w", err)
-	}
+	// // Initialize Kubernetes client
+	// clientset, err := kubernetes.NewForConfig(config)
+	// if err != nil {
+	// 	log.Errorf("Failed to create Kubernetes client: %v", err)
+	// 	return fmt.Errorf("failed to create Kubernetes client: %w", err)
+	// }
 
-	// 获取所有节点列表
-	nodes, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		log.Fatalf("Failed to list nodes: %v", err)
-	}
+	// // 获取所有节点列表
+	// nodes, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+	// if err != nil {
+	// 	log.Fatalf("Failed to list nodes: %v", err)
+	// }
 
-	// 打印节点信息
-	fmt.Printf("There are %d nodes in the cluster:\n", len(nodes.Items))
-	for _, node := range nodes.Items {
-		fmt.Printf("- Name: %s, Status: %s\n", node.Name, node.Status.Phase)
-	}
+	// // 打印节点信息
+	// fmt.Printf("There are %d nodes in the cluster:\n", len(nodes.Items))
+	// for _, node := range nodes.Items {
+	// 	fmt.Printf("- Name: %s, Status: %s\n", node.Name, node.Status.Phase)
+	// }
 
-	hostKubeClient, err := kubernetes.NewForConfig(config.RestConfig)
-	if err != nil {
-		return fmt.Errorf("could not create clientset: %v", err)
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	kosmosClient, err := versioned.NewForConfig(config.RestConfig)
+	nodeName := "node54" // 替换为实际节点名称
+	kosmosClient, err := versioned.NewForConfig(config)
 	if err != nil {
-		return fmt.Errorf("could not create clientset: %v", err)
+		log.Fatalf("Failed to get config: %v", err)
 	}
+	// node, err := kosmosClient.KosmosV1alpha1().GlobalNodes().Get(ctx, nodeName, metav1.GetOptions{})
+	// if err != nil {
+	// 	log.Fatalf("Failed to get node: %v", err)
+	// }
+	// fmt.Printf("- Name: %s, Status: %s\n", node.Name, node.Status)
+
+	//启动GO协程
+	go func(ctx context.Context, kosmosClient *versioned.Clientset, nodeName string) {
+		ticker := time.NewTicker(10 * time.Second) // Adjust interval as needed
+		defer ticker.Stop()
+		for range ticker.C {
+			node, err := kosmosClient.KosmosV1alpha1().GlobalNodes().Get(ctx, nodeName, metav1.GetOptions{})
+			if err != nil {
+				log.Fatalf("Failed to get node: %v", err)
+			}
+			heartbeatTime := metav1.Now()
+			// Heartbeat logic: Log heartbeat or send it to a monitoring service
+			//log.Infof("Heartbeat: server is running on %s", addr)
+			node.Status.Conditions = []corev1.NodeCondition{
+				{
+					Type:              corev1.NodeReady,     // 条件类型：NodeReady
+					Status:            corev1.ConditionTrue, // 状态：True
+					LastHeartbeatTime: heartbeatTime,        // 心跳时间
+					//LastTransitionTime: metav1.Now(),               // 状态转换时间
+					//Reason:  "PeriodicUpdate",           // 原因
+					//Message: "Node is in a ready state", // 信息
+				},
+			}
+			// Simulated log output
+			klog.Infof("Updated Node Conditions: %v", node.Status.Conditions)
+
+			if _, err := kosmosClient.KosmosV1alpha1().GlobalNodes().UpdateStatus(ctx, node, metav1.UpdateOptions{}); err != nil {
+				klog.Errorf("update node %s status for globalnode failed, %v", node.Name, err)
+			}
+			klog.V(4).Infof("SyncNodeStatus: successfully updated global node %s, Status.Conditions: %+v", node.Name, node.Status.Conditions)
+		}
+	}(ctx, kosmosClient, nodeName)
+
+	// hostKubeClient, err := kubernetes.NewForConfig(config.RestConfig)
+	// if err != nil {
+	// 	return fmt.Errorf("could not create clientset: %v", err)
+	// }
+
+	// kosmosClient, err := versioned.NewForConfig(config.RestConfig)
+	// if err != nil {
+	// 	return fmt.Errorf("could not create clientset: %v", err)
+	// }
 
 	// newscheme := scheme.NewSchema()
 	// err = apiextensionsv1.AddToScheme(newscheme)
@@ -186,90 +224,7 @@ func serveCmdRun(_ *cobra.Command, _ []string) error {
 		addr = ":" + port
 	}
 
-	ctx, cancel := context.WithCancel(ctx, config)
-	defer cancel()
-	return run(ctx)
-
 	return Start(addr, certFile, keyFile, user, password)
-}
-
-func run(ctx context.Context, config *config.Config) error {
-
-	newscheme := scheme.NewSchema()
-	err := apiextensionsv1.AddToScheme(newscheme)
-	if err != nil {
-		panic(err)
-	}
-
-	mgr, err := controllerruntime.NewManager(config.RestConfig, controllerruntime.Options{
-		Logger:                  klog.Background(),
-		Scheme:                  newscheme,
-		LeaderElection:          config.LeaderElection.LeaderElect,
-		LeaderElectionID:        config.LeaderElection.ResourceName,
-		LeaderElectionNamespace: config.LeaderElection.ResourceNamespace,
-		LivenessEndpointName:    "/healthz",
-		ReadinessEndpointName:   "/readyz",
-		HealthProbeBindAddress:  ":8081",
-	})
-	if err != nil {
-		return fmt.Errorf("failed to build controller manager: %v", err)
-	}
-
-	// err = mgr.AddHealthzCheck("healthz", healthz.Ping)
-	// if err != nil {
-	// 	return fmt.Errorf("failed to build healthz: %v", err)
-	// }
-
-	// err = mgr.AddReadyzCheck("readyz", healthz.Ping)
-	// if err != nil {
-	// 	return fmt.Errorf("failed to build readyz: %v", err)
-	// }
-
-	hostKubeClient, err := kubernetes.NewForConfig(config.RestConfig)
-	if err != nil {
-		return fmt.Errorf("could not create clientset: %v", err)
-	}
-
-	kosmosClient, err := versioned.NewForConfig(config.RestConfig)
-	if err != nil {
-		return fmt.Errorf("could not create clientset: %v", err)
-	}
-
-	GlobalNodeController := glnodecontroller.GlobalNodeController{
-		Client:        mgr.GetClient(),
-		RootClientSet: hostKubeClient,
-		KosmosClient:  kosmosClient,
-		EventRecorder: mgr.GetEventRecorderFor(constants.GlobalNodeControllerName),
-	}
-
-	if err = GlobalNodeController.SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("error starting %s: %v", constants.GlobalNodeControllerName, err)
-	}
-
-	var globalNode = &v1alpha1.GlobalNode{}
-	globalNode.Name = "node54"
-
-	var targetNode v1alpha1.GlobalNode
-	if err := GlobalNodeController.Get(context.TODO(), types.NamespacedName{Name: globalNode.Name}, &targetNode); err != nil {
-		klog.Errorf("global-node-controller: SyncNodeStatus: can not get target node, err: %s", globalNode.Name)
-		return err
-	}
-
-	//启动GO协程
-	go func() {
-		ticker := time.NewTicker(30 * time.Second) // Adjust interval as needed
-		defer ticker.Stop()
-		for range ticker.C {
-			// Heartbeat logic: Log heartbeat or send it to a monitoring service
-			log.Infof("Heartbeat: server is running on %s", addr)
-			//status := "True"
-			//targetNode.Status.Conditions = //time.Now()
-			//..
-			//fmt.Printf("service status: %v", status)
-		}
-	}()
-
-	return nil
 }
 
 // start server
