@@ -236,7 +236,7 @@ spec:
               secretKeyRef:
                   name: virtual-cluster-operator
                   key: kubeconfig
-            - name: nodeName
+            - name: NODENAME
             valueFrom:
               secretKeyRef:
                   name: 

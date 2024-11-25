@@ -24,13 +24,16 @@ import (
 	"github.com/kosmos.io/kosmos/cmd/kubenest/node-agent/app/logger"
 	"github.com/kosmos.io/kosmos/pkg/apis/kosmos/v1alpha1"
 	"github.com/kosmos.io/kosmos/pkg/generated/clientset/versioned"
+	"github.com/kosmos.io/kosmos/pkg/scheme"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
+	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -93,6 +96,33 @@ func serveCmdRun(_ *cobra.Command, _ []string) error {
 		fmt.Printf("- Name: %s, Status: %s\n", node.Name, node.Status.Phase)
 	}
 
+	newscheme := scheme.NewSchema()
+	err = apiextensionsv1.AddToScheme(newscheme)
+	if err != nil {
+		panic(err)
+	}
+
+	mgr, err := controllerruntime.NewManager(config.RestConfig, controllerruntime.Options{
+		Logger:                  klog.Background(),
+		Scheme:                  newscheme,
+		LeaderElection:          config.LeaderElection.LeaderElect,
+		LeaderElectionID:        config.LeaderElection.ResourceName,
+		LeaderElectionNamespace: config.LeaderElection.ResourceNamespace,
+		LivenessEndpointName:    "/healthz",
+		ReadinessEndpointName:   "/readyz",
+		HealthProbeBindAddress:  ":8081",
+	})
+
+	hostKubeClient, err := kubernetes.NewForConfig(config.RestConfig)
+	if err != nil {
+		return fmt.Errorf("could not create clientset: %v", err)
+	}
+
+	kosmosClient, err := versioned.NewForConfig(config.RestConfig)
+	if err != nil {
+		return fmt.Errorf("could not create clientset: %v", err)
+	}
+
 	type GlobalNodeController struct {
 		client.Client
 		RootClientSet kubernetes.Interface
@@ -101,8 +131,9 @@ func serveCmdRun(_ *cobra.Command, _ []string) error {
 	var instance GlobalNodeController
 	r := &instance
 
-	var globalNode *v1alpha1.GlobalNode
-	globalNode.Name = "node52"
+	//var globalNode *v1alpha1.GlobalNode
+	var globalNode = &v1alpha1.GlobalNode{}
+	globalNode.Name = "node54"
 	var targetNode v1alpha1.GlobalNode
 	if err := r.Get(context.TODO(), types.NamespacedName{Name: globalNode.Name}, &targetNode); err != nil {
 		klog.Errorf("global-node-controller: SyncNodeStatus: can not get target node, err: %s", globalNode.Name)
