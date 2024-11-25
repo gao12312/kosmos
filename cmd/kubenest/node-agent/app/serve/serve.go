@@ -22,8 +22,11 @@ import (
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
 	"github.com/kosmos.io/kosmos/cmd/kubenest/node-agent/app/logger"
+	"github.com/kosmos.io/kosmos/cmd/kubenest/node-agent/config"
 	"github.com/kosmos.io/kosmos/pkg/apis/kosmos/v1alpha1"
 	"github.com/kosmos.io/kosmos/pkg/generated/clientset/versioned"
+	"github.com/kosmos.io/kosmos/pkg/kubenest/constants"
+	glnodecontroller "github.com/kosmos.io/kosmos/pkg/kubenest/controller/global.node.controller"
 	"github.com/kosmos.io/kosmos/pkg/scheme"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -34,7 +37,6 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	controllerruntime "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var (
@@ -96,8 +98,105 @@ func serveCmdRun(_ *cobra.Command, _ []string) error {
 		fmt.Printf("- Name: %s, Status: %s\n", node.Name, node.Status.Phase)
 	}
 
+	hostKubeClient, err := kubernetes.NewForConfig(config.RestConfig)
+	if err != nil {
+		return fmt.Errorf("could not create clientset: %v", err)
+	}
+
+	kosmosClient, err := versioned.NewForConfig(config.RestConfig)
+	if err != nil {
+		return fmt.Errorf("could not create clientset: %v", err)
+	}
+
+	// newscheme := scheme.NewSchema()
+	// err = apiextensionsv1.AddToScheme(newscheme)
+	// if err != nil {
+	// 	panic(err)
+	// }
+
+	// mgr, err := controllerruntime.NewManager(config.RestConfig, controllerruntime.Options{
+	// 	Logger:                  klog.Background(),
+	// 	Scheme:                  newscheme,
+	// 	LeaderElection:          config.LeaderElection.LeaderElect,
+	// 	LeaderElectionID:        config.LeaderElection.ResourceName,
+	// 	LeaderElectionNamespace: config.LeaderElection.ResourceNamespace,
+	// 	LivenessEndpointName:    "/healthz",
+	// 	ReadinessEndpointName:   "/readyz",
+	// 	HealthProbeBindAddress:  ":8081",
+	// })
+
+	// type Config struct {
+	// 	KubeNestOptions v1alpha1.KubeNestConfiguration
+	// 	//Client          clientset.Interface
+	// 	RestConfig       *restclient.Config
+	// 	KubeconfigStream []byte
+	// 	// LeaderElection is optional.
+	// 	LeaderElection componentbaseconfig.LeaderElectionConfiguration
+	// }
+
+	// hostKubeClient, err := kubernetes.NewForConfig(config.RestConfig)
+	// if err != nil {
+	// 	return fmt.Errorf("could not create clientset: %v", err)
+	// }
+
+	// kosmosClient, err := versioned.NewForConfig(config.RestConfig)
+	// if err != nil {
+	// 	return fmt.Errorf("could not create clientset: %v", err)
+	// }
+
+	// type GlobalNodeController struct {
+	// 	client.Client
+	// 	RootClientSet kubernetes.Interface
+	// 	KosmosClient  versioned.Interface
+	// }
+	// var instance GlobalNodeController
+	// r := &instance
+
+	// //var globalNode *v1alpha1.GlobalNode
+	// var globalNode = &v1alpha1.GlobalNode{}
+	// globalNode.Name = "node54"
+	// var targetNode v1alpha1.GlobalNode
+	// if err := r.Get(context.TODO(), types.NamespacedName{Name: globalNode.Name}, &targetNode); err != nil {
+	// 	klog.Errorf("global-node-controller: SyncNodeStatus: can not get target node, err: %s", globalNode.Name)
+	// 	return err
+	// }
+
+	// //启动GO协程
+	// go func() {
+	// 	ticker := time.NewTicker(30 * time.Second) // Adjust interval as needed
+	// 	defer ticker.Stop()
+	// 	for range ticker.C {
+	// 		// Heartbeat logic: Log heartbeat or send it to a monitoring service
+	// 		log.Infof("Heartbeat: server is running on %s", addr)
+	// 		//status := "True"
+	// 		//targetNode.Status.Conditions = //time.Now()
+	// 		//..
+	// 		//fmt.Printf("service status: %v", status)
+	// 	}
+	// }()
+
+	user := viper.GetString("WEB_USER")
+	password := viper.GetString("WEB_PASS")
+	port := viper.GetString("WEB_PORT")
+	if len(user) == 0 || len(password) == 0 {
+		log.Errorf("-user and -password are required %s %s", user, password)
+		return errors.New("-user and -password are required")
+	}
+	if port != "" {
+		addr = ":" + port
+	}
+
+	ctx, cancel := context.WithCancel(ctx, config)
+	defer cancel()
+	return run(ctx)
+
+	return Start(addr, certFile, keyFile, user, password)
+}
+
+func run(ctx context.Context, config *config.Config) error {
+
 	newscheme := scheme.NewSchema()
-	err = apiextensionsv1.AddToScheme(newscheme)
+	err := apiextensionsv1.AddToScheme(newscheme)
 	if err != nil {
 		panic(err)
 	}
@@ -112,6 +211,19 @@ func serveCmdRun(_ *cobra.Command, _ []string) error {
 		ReadinessEndpointName:   "/readyz",
 		HealthProbeBindAddress:  ":8081",
 	})
+	if err != nil {
+		return fmt.Errorf("failed to build controller manager: %v", err)
+	}
+
+	// err = mgr.AddHealthzCheck("healthz", healthz.Ping)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to build healthz: %v", err)
+	// }
+
+	// err = mgr.AddReadyzCheck("readyz", healthz.Ping)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to build readyz: %v", err)
+	// }
 
 	hostKubeClient, err := kubernetes.NewForConfig(config.RestConfig)
 	if err != nil {
@@ -123,19 +235,22 @@ func serveCmdRun(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("could not create clientset: %v", err)
 	}
 
-	type GlobalNodeController struct {
-		client.Client
-		RootClientSet kubernetes.Interface
-		KosmosClient  versioned.Interface
+	GlobalNodeController := glnodecontroller.GlobalNodeController{
+		Client:        mgr.GetClient(),
+		RootClientSet: hostKubeClient,
+		KosmosClient:  kosmosClient,
+		EventRecorder: mgr.GetEventRecorderFor(constants.GlobalNodeControllerName),
 	}
-	var instance GlobalNodeController
-	r := &instance
 
-	//var globalNode *v1alpha1.GlobalNode
+	if err = GlobalNodeController.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("error starting %s: %v", constants.GlobalNodeControllerName, err)
+	}
+
 	var globalNode = &v1alpha1.GlobalNode{}
 	globalNode.Name = "node54"
+
 	var targetNode v1alpha1.GlobalNode
-	if err := r.Get(context.TODO(), types.NamespacedName{Name: globalNode.Name}, &targetNode); err != nil {
+	if err := GlobalNodeController.Get(context.TODO(), types.NamespacedName{Name: globalNode.Name}, &targetNode); err != nil {
 		klog.Errorf("global-node-controller: SyncNodeStatus: can not get target node, err: %s", globalNode.Name)
 		return err
 	}
@@ -154,17 +269,7 @@ func serveCmdRun(_ *cobra.Command, _ []string) error {
 		}
 	}()
 
-	user := viper.GetString("WEB_USER")
-	password := viper.GetString("WEB_PASS")
-	port := viper.GetString("WEB_PORT")
-	if len(user) == 0 || len(password) == 0 {
-		log.Errorf("-user and -password are required %s %s", user, password)
-		return errors.New("-user and -password are required")
-	}
-	if port != "" {
-		addr = ":" + port
-	}
-	return Start(addr, certFile, keyFile, user, password)
+	return nil
 }
 
 // start server
