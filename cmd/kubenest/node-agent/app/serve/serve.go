@@ -41,6 +41,7 @@ var (
 	certFile string // SSL certificate file
 	keyFile  string // SSL key file
 	addr     string // server listen address
+	nodeName string // server nodename
 	log      = logger.GetLogger()
 )
 
@@ -57,161 +58,19 @@ func init() {
 	ServeCmd.PersistentFlags().StringVarP(&addr, "addr", "a", ":5678", "websocket service address")
 	ServeCmd.PersistentFlags().StringVarP(&certFile, "cert", "c", "cert.pem", "SSL certificate file")
 	ServeCmd.PersistentFlags().StringVarP(&keyFile, "key", "k", "key.pem", "SSL key file")
+	ServeCmd.PersistentFlags().StringVarP(&nodeName, "nodename", "n", "", "set nodename")
 }
 
 func serveCmdRun(_ *cobra.Command, _ []string) error {
 
-	//配置kubeconfig
-	kubeconfigPath := viper.GetString("KUBECONFIG")
-	log.Infof("Using kubeconfig: %s", kubeconfigPath)
-	// Load Kubernetes configuration
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
-	if err != nil {
-		log.Errorf("Failed to load kubeconfig: %v", err)
-		return fmt.Errorf("failed to load kubeconfig: %w", err)
-	}
-
-	// // Initialize Kubernetes client
-	// clientset, err := kubernetes.NewForConfig(config)
-	// if err != nil {
-	// 	log.Errorf("Failed to create Kubernetes client: %v", err)
-	// 	return fmt.Errorf("failed to create Kubernetes client: %w", err)
-	// }
-
-	// // 获取所有节点列表
-	// nodes, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
-	// if err != nil {
-	// 	log.Fatalf("Failed to list nodes: %v", err)
-	// }
-
-	// // 打印节点信息
-	// fmt.Printf("There are %d nodes in the cluster:\n", len(nodes.Items))
-	// for _, node := range nodes.Items {
-	// 	fmt.Printf("- Name: %s, Status: %s\n", node.Name, node.Status.Phase)
-	// }
-
+	//start heartbeatCheck Goroutine
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	nodeName := "node54" // 替换为实际节点名称
-	kosmosClient, err := versioned.NewForConfig(config)
-	if err != nil {
-		log.Fatalf("Failed to get config: %v", err)
+	if len(nodeName) == 0 {
+		nodeName = viper.GetString("NODE_NAME")
 	}
-	// node, err := kosmosClient.KosmosV1alpha1().GlobalNodes().Get(ctx, nodeName, metav1.GetOptions{})
-	// if err != nil {
-	// 	log.Fatalf("Failed to get node: %v", err)
-	// }
-	// fmt.Printf("- Name: %s, Status: %s\n", node.Name, node.Status)
-
-	//启动GO协程
-	go func(ctx context.Context, kosmosClient *versioned.Clientset, nodeName string) {
-		ticker := time.NewTicker(10 * time.Second) // Adjust interval as needed
-		defer ticker.Stop()
-		for range ticker.C {
-			node, err := kosmosClient.KosmosV1alpha1().GlobalNodes().Get(ctx, nodeName, metav1.GetOptions{})
-			if err != nil {
-				log.Fatalf("Failed to get node: %v", err)
-			}
-			heartbeatTime := metav1.Now()
-			// Heartbeat logic: Log heartbeat or send it to a monitoring service
-			//log.Infof("Heartbeat: server is running on %s", addr)
-			node.Status.Conditions = []corev1.NodeCondition{
-				{
-					Type:              corev1.NodeReady,     // 条件类型：NodeReady
-					Status:            corev1.ConditionTrue, // 状态：True
-					LastHeartbeatTime: heartbeatTime,        // 心跳时间
-					//LastTransitionTime: metav1.Now(),               // 状态转换时间
-					//Reason:  "PeriodicUpdate",           // 原因
-					//Message: "Node is in a ready state", // 信息
-				},
-			}
-			// Simulated log output
-			klog.Infof("Updated Node Conditions: %v", node.Status.Conditions)
-
-			if _, err := kosmosClient.KosmosV1alpha1().GlobalNodes().UpdateStatus(ctx, node, metav1.UpdateOptions{}); err != nil {
-				klog.Errorf("update node %s status for globalnode failed, %v", node.Name, err)
-			}
-			klog.V(4).Infof("SyncNodeStatus: successfully updated global node %s, Status.Conditions: %+v", node.Name, node.Status.Conditions)
-		}
-	}(ctx, kosmosClient, nodeName)
-
-	// hostKubeClient, err := kubernetes.NewForConfig(config.RestConfig)
-	// if err != nil {
-	// 	return fmt.Errorf("could not create clientset: %v", err)
-	// }
-
-	// kosmosClient, err := versioned.NewForConfig(config.RestConfig)
-	// if err != nil {
-	// 	return fmt.Errorf("could not create clientset: %v", err)
-	// }
-
-	// newscheme := scheme.NewSchema()
-	// err = apiextensionsv1.AddToScheme(newscheme)
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	// mgr, err := controllerruntime.NewManager(config.RestConfig, controllerruntime.Options{
-	// 	Logger:                  klog.Background(),
-	// 	Scheme:                  newscheme,
-	// 	LeaderElection:          config.LeaderElection.LeaderElect,
-	// 	LeaderElectionID:        config.LeaderElection.ResourceName,
-	// 	LeaderElectionNamespace: config.LeaderElection.ResourceNamespace,
-	// 	LivenessEndpointName:    "/healthz",
-	// 	ReadinessEndpointName:   "/readyz",
-	// 	HealthProbeBindAddress:  ":8081",
-	// })
-
-	// type Config struct {
-	// 	KubeNestOptions v1alpha1.KubeNestConfiguration
-	// 	//Client          clientset.Interface
-	// 	RestConfig       *restclient.Config
-	// 	KubeconfigStream []byte
-	// 	// LeaderElection is optional.
-	// 	LeaderElection componentbaseconfig.LeaderElectionConfiguration
-	// }
-
-	// hostKubeClient, err := kubernetes.NewForConfig(config.RestConfig)
-	// if err != nil {
-	// 	return fmt.Errorf("could not create clientset: %v", err)
-	// }
-
-	// kosmosClient, err := versioned.NewForConfig(config.RestConfig)
-	// if err != nil {
-	// 	return fmt.Errorf("could not create clientset: %v", err)
-	// }
-
-	// type GlobalNodeController struct {
-	// 	client.Client
-	// 	RootClientSet kubernetes.Interface
-	// 	KosmosClient  versioned.Interface
-	// }
-	// var instance GlobalNodeController
-	// r := &instance
-
-	// //var globalNode *v1alpha1.GlobalNode
-	// var globalNode = &v1alpha1.GlobalNode{}
-	// globalNode.Name = "node54"
-	// var targetNode v1alpha1.GlobalNode
-	// if err := r.Get(context.TODO(), types.NamespacedName{Name: globalNode.Name}, &targetNode); err != nil {
-	// 	klog.Errorf("global-node-controller: SyncNodeStatus: can not get target node, err: %s", globalNode.Name)
-	// 	return err
-	// }
-
-	// //启动GO协程
-	// go func() {
-	// 	ticker := time.NewTicker(30 * time.Second) // Adjust interval as needed
-	// 	defer ticker.Stop()
-	// 	for range ticker.C {
-	// 		// Heartbeat logic: Log heartbeat or send it to a monitoring service
-	// 		log.Infof("Heartbeat: server is running on %s", addr)
-	// 		//status := "True"
-	// 		//targetNode.Status.Conditions = //time.Now()
-	// 		//..
-	// 		//fmt.Printf("service status: %v", status)
-	// 	}
-	// }()
+	go heartbeatCheck(ctx, nodeName)
 
 	user := viper.GetString("WEB_USER")
 	password := viper.GetString("WEB_PASS")
@@ -225,6 +84,50 @@ func serveCmdRun(_ *cobra.Command, _ []string) error {
 	}
 
 	return Start(addr, certFile, keyFile, user, password)
+}
+
+func heartbeatCheck(ctx context.Context, nodeName string) {
+	kubeconfigPath := "/srv/node-agent/kubeconfig"
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		log.Errorf("Failed to load kubeconfig: %v", err)
+	}
+
+	kosmosClient, err := versioned.NewForConfig(config)
+	if err != nil {
+		log.Errorf("Failed to get config: %v", err)
+	}
+
+	ticker := time.NewTicker(40 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Infof("Heartbeat for node %s stopped", nodeName)
+			return
+		case <-ticker.C:
+			node, err := kosmosClient.KosmosV1alpha1().GlobalNodes().Get(ctx, nodeName, metav1.GetOptions{})
+			if err != nil {
+				log.Fatalf("Failed to get node: %v", err)
+			}
+			heartbeatTime := metav1.Now()
+			node.Status.Conditions = []corev1.NodeCondition{
+				{
+					//Type:              corev1.NodeReady,
+					//Status:            corev1.ConditionTrue,
+					LastHeartbeatTime: heartbeatTime,
+					//LastTransitionTime: metav1.Now(),
+					//Reason:  "PeriodicUpdate",
+					//Message: "Node is in a ready state",
+				},
+			}
+			if _, err := kosmosClient.KosmosV1alpha1().GlobalNodes().UpdateStatus(ctx, node, metav1.UpdateOptions{}); err != nil {
+				klog.Errorf("update node %s status for globalnode failed, %v", node.Name, err)
+			}
+			log.Infof("SyncNodeStatus: successfully updated global node %s, Status.Conditions: %+v", node.Name, node.Status.Conditions)
+		}
+	}
 }
 
 // start server
